@@ -1,0 +1,21 @@
+pipeline {
+    agent any
+    stages {
+        stage('Checkout') {
+            steps {
+                // Sostituisci con l'URL del tuo repo fe
+                git url: 'https://github.com/KarateFlow/karateflow-fe.git', branch: 'main'
+            }
+        }
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm install'
+            }
+        }
+        stage('Angular Build') {
+            steps {
+                sh 'npm run build'
+            }
+        }
+    }
+}

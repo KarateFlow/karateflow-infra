@@ -1,0 +1,19 @@
+pipeline {
+    agent any
+    tools {
+        maven 'Maven 3.x'
+    }
+    stages {
+        stage('Checkout') {
+            steps {
+                // Sostituisci con l'URL del tuo repo be
+                git url: 'https://github.com/KarateFlow/karateflow-be.git', branch: 'main'
+            }
+        }
+        stage('Maven Compile & PMD Check') {
+            steps {
+                sh 'mvn clean compile verify'
+            }
+        }
+    }
+}
