@@ -1,22 +1,60 @@
 pipeline {
     agent any
+    parameters {
+        string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-be da testare')
+    }
     environment {
-        TESTCONTAINERS_RYUK_DISABLED = 'true'
+        GITHUB_CREDENTIALS = credentials('github-token-secret') 
     }
     tools {
         maven 'Maven 3.x'
     }
     stages {
-        stage('Checkout') {
+        stage('Checkout e Init') {
             steps {
-                // Sostituisci con l'URL del tuo repo be
-                git url: 'https://github.com/KarateFlow/karateflow-be.git', branch: 'main'
+                // 1. Clona il backend usando il parametro
+                git url: 'https://github.com/KarateFlow/karateflow-be.git', branch: "${params.APP_BRANCH}"
+                
+                // 2. ORA siamo dentro la repo del backend. Recuperiamo lo SHA corretto.
+                script {
+                    env.COMMIT_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                }
+
+                // 3. Mandiamo lo stato "pending"
+                sh """
+                    curl -H "Authorization: token ${GITHUB_CREDENTIALS}" \
+                         -H "Accept: application/vnd.github.v3+json" \
+                         -X POST \
+                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Build in corso..."}' \
+                         https://api.github.com/repos/KarateFlow/karateflow-be/statuses/${env.COMMIT_SHA}
+                """
             }
         }
-        stage('Maven Compile & PMD Check') {
+        stage('Compile & Test') {
             steps {
-                sh 'mvn clean compile verify'
+                // 4. Esportiamo Ryuk inline per bypassare il bug di Jenkins
+                sh 'export TESTCONTAINERS_RYUK_DISABLED=true && mvn clean compile verify'
             }
+        }
+    }
+    post {
+        success {
+            sh """
+                curl -H "Authorization: token ${GITHUB_CREDENTIALS}" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     -X POST \
+                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Tutti i test superati!"}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/${env.COMMIT_SHA}
+            """
+        }
+        failure {
+            sh """
+                curl -H "Authorization: token ${GITHUB_CREDENTIALS}" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     -X POST \
+                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Build fallita."}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/${env.COMMIT_SHA}
+            """
         }
     }
 }
