@@ -32,8 +32,11 @@ pipeline {
         }
         stage('Compile & Test') {
             steps {
-                // 4. Esportiamo Ryuk inline per bypassare il bug di Jenkins
-                sh 'export TESTCONTAINERS_RYUK_DISABLED=true && mvn clean compile verify'
+                // 4. Metodo infallibile per spegnere Ryuk in ambienti CI Docker
+                sh '''
+                    echo "testcontainers.ryuk.disabled=true" > ~/.testcontainers.properties
+                    mvn clean compile verify
+                '''
             }
         }
     }
@@ -58,3 +61,4 @@ pipeline {
         }
     }
 }
+
