@@ -1,24 +1,80 @@
 pipeline {
     agent any
+    
+    parameters {
+        string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-fe da testare')
+    }
+    
+    environment {
+        GITHUB_CREDENTIALS = credentials('github-token-secret')
+    }
+    
     tools {
         nodejs 'Node20'
     }
+    
     stages {
-        stage('Checkout') {
+        stage('Checkout e Init') {
             steps {
-                // Sostituisci con l'URL del tuo repo fe
-                git url: 'https://github.com/KarateFlow/karateflow-fe.git', branch: 'main'
+                git url: 'https://github.com/KarateFlow/karateflow-fe.git', branch: "${params.APP_BRANCH}"
+                
+                script {
+                    env.COMMIT_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                }
+
+                sh """
+                    curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
+                         -H "Accept: application/vnd.github.v3+json" \
+                         -X POST \
+                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Analisi in corso...", "target_url": "${env.BUILD_URL}"}' \
+                         https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
+                """
             }
         }
+        
         stage('Install Dependencies') {
             steps {
                 sh 'npm install'
             }
         }
+        
+        stage('Lint') {
+            steps {
+                sh 'npm run lint'
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                sh 'npm run test -- --no-watch'
+            }
+        }
+        
         stage('Angular Build') {
             steps {
                 sh 'npm run build'
             }
+        }
+    }
+    
+    post {
+        success {
+            sh """
+                curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     -X POST \
+                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Qualità verificata!", "target_url": "${env.BUILD_URL}"}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
+            """
+        }
+        failure {
+            sh """
+                curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     -X POST \
+                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Verifica fallita. Controlla i log.", "target_url": "${env.BUILD_URL}"}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
+            """
         }
     }
 }
