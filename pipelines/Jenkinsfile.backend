@@ -1,64 +1,67 @@
 pipeline {
     agent any
+    
     parameters {
         string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-be da testare')
     }
+    
     environment {
-        GITHUB_CREDENTIALS = credentials('github-token-secret') 
+        GITHUB_CREDENTIALS = credentials('github-token-secret')
+        TESTCONTAINERS_RYUK_DISABLED = 'true'
+        TESTCONTAINERS_HOST_OVERRIDE = 'host.docker.internal'
     }
+    
     tools {
         maven 'Maven 3.x'
     }
+    
     stages {
         stage('Checkout e Init') {
             steps {
-                // 1. Clona il backend usando il parametro
                 git url: 'https://github.com/KarateFlow/karateflow-be.git', branch: "${params.APP_BRANCH}"
                 
-                // 2. ORA siamo dentro la repo del backend. Recuperiamo lo SHA corretto.
                 script {
                     env.COMMIT_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
                 }
 
-                // 3. Mandiamo lo stato "pending"
+                // Uso \$ per GITHUB_CREDENTIALS e COMMIT_SHA per farli risolvere dalla shell (evita leak nei log)
+                // Uso ${env.BUILD_URL} (risolto da Groovy) per fornire il link diretto alla build su GitHub
                 sh """
-                    curl -H "Authorization: token ${GITHUB_CREDENTIALS}" \
+                    curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                          -H "Accept: application/vnd.github.v3+json" \
                          -X POST \
-                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Build in corso..."}' \
-                         https://api.github.com/repos/KarateFlow/karateflow-be/statuses/${env.COMMIT_SHA}
+                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Build in corso...", "target_url": "${env.BUILD_URL}"}' \
+                         https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
                 """
             }
         }
+        
         stage('Compile & Test') {
             steps {
-                // 4. Metodo infallibile per spegnere Ryuk in ambienti CI Docker
-                sh '''
-                    echo "testcontainers.ryuk.disabled=true" > ~/.testcontainers.properties
-                    mvn clean compile verify
-                '''
+                // Ryuk è già disabilitato dall'environment block
+                sh 'mvn clean compile verify'
             }
         }
     }
+    
     post {
         success {
             sh """
-                curl -H "Authorization: token ${GITHUB_CREDENTIALS}" \
+                curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Tutti i test superati!"}' \
-                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/${env.COMMIT_SHA}
+                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Tutti i test superati!", "target_url": "${env.BUILD_URL}"}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
             """
         }
         failure {
             sh """
-                curl -H "Authorization: token ${GITHUB_CREDENTIALS}" \
+                curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Build fallita."}' \
-                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/${env.COMMIT_SHA}
+                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Build fallita.", "target_url": "${env.BUILD_URL}"}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
             """
         }
     }
 }
-
