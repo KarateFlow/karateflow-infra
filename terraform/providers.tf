@@ -1,12 +1,12 @@
 terraform {
   required_providers {
     kubernetes = {
-        source = "hashicorp/kubernetes"
-        version = "~> 2.0"
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
     }
   }
 }
 
 provider "kubernetes" {
-  config_path = "./k3s-secrets.yaml"
+  config_path = "./k3s-karateflow.yaml"
 }
