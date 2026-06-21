@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+  namespace: karateflow-stg
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: spring-boot
+          image: 127.0.0.1:5000/karateflow-be:latest # Immagine futura che creerà Jenkins
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "staging"
+            - name: SPRING_DATA_MONGODB_URI
+              value: "mongodb://mongo-service:27017/karateflow_stg" # Il DNS interno creato nel Task precedente
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi" # Quota residua del Namespace
+              cpu: "250m"
