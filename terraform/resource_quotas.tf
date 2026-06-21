@@ -5,9 +5,9 @@ resource "kubernetes_resource_quota" "staging_quota" {
   }
   spec {
     hard = {
-      "requests.cpu"    = "0.5"   # Mezzo core garantito
-      "requests.memory" = "256Mi" # 256 MB garantiti
-      "limits.cpu"      = "1"     # Massimo 1 core
+      "requests.cpu"    = "1"   # Alzato per risolvere exceeded quotas frontend
+      "requests.memory" = "512Mi" # Alzato per risolvere exceeded quotas frontend 
+      "limits.cpu"      = "1.5"     # Massimo 1 core
       "limits.memory"   = "1Gi" # Limite alzato da 512Mi a 1Gi
     }
   }
