@@ -7,6 +7,9 @@ pipeline {
     
     environment {
         GITHUB_CREDENTIALS = credentials('github-token-secret')
+        
+        LOCAL_REGISTRY = '192.168.1.50:32000' 
+        IMAGE_NAME = 'karateflow-fe'
     }
     
     tools {
@@ -26,7 +29,7 @@ pipeline {
                     curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                          -H "Accept: application/vnd.github.v3+json" \
                          -X POST \
-                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Analisi in corso...", "target_url": "${env.BUILD_URL}"}' \
+                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Analisi e Build in corso...", "target_url": "${env.BUILD_URL}"}' \
                          https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
                 """
             }
@@ -55,6 +58,40 @@ pipeline {
                 sh 'npm run build'
             }
         }
+
+        stage('Build Docker Image') {
+            steps {
+                // Il Dockerfile multi-stage eseguirà la build ottimizzata per staging e impacchetterà Nginx
+                sh """
+                    docker build -t ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} \
+                                 -t ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest .
+                """
+            }
+        }
+
+        stage('Push to Registry') {
+            steps {
+                sh """
+                    docker push ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA}
+                    docker push ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest
+                """
+            }
+        }
+
+        stage('Deploy to K3s Staging') {
+            steps {
+                withCredentials([file(credentialsId: 'k3s-kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+                    sh """
+                        export KUBECONFIG=\$KUBECONFIG_FILE
+                        
+                        # Sostituito 'karateflow-fe' con il corretto nome del container 'nginx-angular'
+                        kubectl set image deployment/frontend-deployment nginx-angular=${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} -n karateflow-stg
+                        
+                        kubectl rollout status deployment/frontend-deployment -n karateflow-stg
+                    """
+                }
+            }
+        }
     }
     
     post {
@@ -63,16 +100,18 @@ pipeline {
                 curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Qualità verificata!", "target_url": "${env.BUILD_URL}"}' \
+                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Deploy in Staging completato!", "target_url": "${env.BUILD_URL}"}' \
                      https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
             """
+            // Pulizia delle immagini docker locali sul PC per risparmiare spazio
+            sh "docker rmi ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest || true"
         }
         failure {
             sh """
                 curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Verifica fallita. Controlla i log.", "target_url": "${env.BUILD_URL}"}' \
+                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Build o Deploy fallito. Controlla i log.", "target_url": "${env.BUILD_URL}"}' \
                      https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
             """
         }
