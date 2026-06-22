@@ -76,7 +76,7 @@ pipeline {
                         export KUBECONFIG=\$KUBECONFIG_FILE
                         
                         # Aggiorniamo l'immagine nel deployment di Kubernetes 
-                        kubectl set image deployment/backend-deployment backend=${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} -n karateflow-stg
+                        kubectl set image deployment/backend-deployment backend-deployment=${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} -n karateflow-stg
                         
                         # Mettiamo la pipeline in attesa finché i pod non sono effettivamente partiti e in salute
                         kubectl rollout status deployment/backend-deployment -n karateflow-stg
