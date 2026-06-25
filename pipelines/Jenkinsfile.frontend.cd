@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     parameters {
-        string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-fe da testare')
+        string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-fe da compilare e distribuire')
     }
     
     environment {
@@ -29,7 +29,7 @@ pipeline {
                     curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                          -H "Accept: application/vnd.github.v3+json" \
                          -X POST \
-                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Analisi e Build in corso...", "target_url": "${env.BUILD_URL}"}' \
+                         -d '{"state": "pending", "context": "continuous-integration/jenkins/cd", "description": "Deploy in Staging in corso...", "target_url": "${env.BUILD_URL}"}' \
                          https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
                 """
             }
@@ -41,18 +41,6 @@ pipeline {
             }
         }
         
-        stage('Lint') {
-            steps {
-                sh 'npm run lint'
-            }
-        }
-        
-        stage('Test') {
-            steps {
-                sh 'npm run test -- --no-watch'
-            }
-        }
-        
         stage('Angular Build') {
             steps {
                 sh 'npm run build'
@@ -61,7 +49,6 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                // Il Dockerfile multi-stage eseguirà la build ottimizzata per staging e impacchetterà Nginx
                 sh """
                     docker build -t ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} \
                                  -t ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest .
@@ -71,9 +58,24 @@ pipeline {
 
         stage('Push to Registry') {
             steps {
+                // Inviamo le immagini al registro locale sul Raspberry Pi con logica di retry per gestire carichi/latenze temporanee
                 sh """
-                    docker push ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA}
-                    docker push ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest
+                    push_with_retry() {
+                        local img=\$1
+                        local max_attempts=3
+                        local attempt=1
+                        until docker push "\$img" || [ \$attempt -eq \$max_attempts ]; do
+                            echo "Push fallito per \$img. Tentativo \$attempt di \$max_attempts. Riprovo in 5 secondi..."
+                            sleep 5
+                            attempt=\$((attempt + 1))
+                        done
+                        if [ \$attempt -eq \$max_attempts ]; then
+                            echo "Errore: Push di \$img fallito dopo \$max_attempts tentativi."
+                            exit 1
+                        fi
+                    }
+                    push_with_retry "${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA}"
+                    push_with_retry "${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest"
                 """
             }
         }
@@ -100,7 +102,7 @@ pipeline {
                 curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Deploy in Staging completato!", "target_url": "${env.BUILD_URL}"}' \
+                     -d '{"state": "success", "context": "continuous-integration/jenkins/cd", "description": "Deploy in Staging completato!", "target_url": "${env.BUILD_URL}"}' \
                      https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
             """
             // Pulizia delle immagini docker locali sul PC per risparmiare spazio
@@ -111,7 +113,7 @@ pipeline {
                 curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Build o Deploy fallito. Controlla i log.", "target_url": "${env.BUILD_URL}"}' \
+                     -d '{"state": "failure", "context": "continuous-integration/jenkins/cd", "description": "Deploy in Staging fallito. Controlla i log.", "target_url": "${env.BUILD_URL}"}' \
                      https://api.github.com/repos/KarateFlow/karateflow-fe/statuses/\$COMMIT_SHA
             """
         }
