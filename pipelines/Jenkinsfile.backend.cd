@@ -2,21 +2,13 @@ pipeline {
     agent any
     
     parameters {
-        string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-be da testare')
+        string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-be da compilare e distribuire')
     }
     
     environment {
         GITHUB_CREDENTIALS = credentials('github-token-secret')
-        TESTCONTAINERS_RYUK_DISABLED = 'true'
-        TESTCONTAINERS_HOST_OVERRIDE = 'host.docker.internal'
-
-        // --- NUOVE VARIABILI PER LA CD ---
         LOCAL_REGISTRY = '192.168.1.50:32000' 
         IMAGE_NAME = 'karateflow-be'
-    }
-    
-    tools {
-        maven 'Maven 3.x'
     }
     
     stages {
@@ -29,25 +21,16 @@ pipeline {
                     env.COMMIT_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
                 }
 
-                // Uso \$ per GITHUB_CREDENTIALS e COMMIT_SHA per farli risolvere dalla shell (evita leak nei log)
-                // Uso ${env.BUILD_URL} (risolto da Groovy) per fornire il link diretto alla build su GitHub
                 sh """
                     curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                          -H "Accept: application/vnd.github.v3+json" \
                          -X POST \
-                         -d '{"state": "pending", "context": "continuous-integration/jenkins", "description": "Build in corso...", "target_url": "${env.BUILD_URL}"}' \
+                         -d '{"state": "pending", "context": "continuous-integration/jenkins/cd", "description": "Deploy in Staging in corso...", "target_url": "${env.BUILD_URL}"}' \
                          https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
                 """
             }
         }
         
-        stage('Compile & Test') {
-            steps {
-                // Ryuk è già disabilitato dall'environment block
-                sh 'mvn clean compile verify'
-            }
-        }
-
         stage('Build Docker Image') {
             steps {
                 sh """
@@ -59,26 +42,39 @@ pipeline {
 
         stage('Push to Registry') {
             steps {
-                // Inviamo le immagini al registro locale sul Raspberry Pi
+                // Inviamo le immagini al registro locale sul Raspberry Pi con logica di retry per gestire carichi/latenze temporanee
                 sh """
-                    docker push ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA}
-                    docker push ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest
+                    push_with_retry() {
+                        local img=\$1
+                        local max_attempts=3
+                        local attempt=1
+                        until docker push "\$img" || [ \$attempt -eq \$max_attempts ]; do
+                            echo "Push fallito per \$img. Tentativo \$attempt di \$max_attempts. Riprovo in 5 secondi..."
+                            sleep 5
+                            attempt=\$((attempt + 1))
+                        done
+                        if [ \$attempt -eq \$max_attempts ]; then
+                            echo "Errore: Push di \$img fallito dopo \$max_attempts tentativi."
+                            exit 1
+                        fi
+                    }
+                    push_with_retry "${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA}"
+                    push_with_retry "${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest"
                 """
             }
         }
 
         stage('Deploy to K3s Staging') {
             steps {
-                // Recuperiamo in modo sicuro il kubeconfig iniettato nel Task 6
                 withCredentials([file(credentialsId: 'k3s-kubeconfig', variable: 'KUBECONFIG_FILE')]) {
                     sh """
-                        # Diciamo a kubectl quale file di configurazione usare
+                        # Configurazione del file kubeconfig
                         export KUBECONFIG=\$KUBECONFIG_FILE
                         
                         # Aggiorniamo l'immagine nel deployment di Kubernetes 
                         kubectl set image deployment/backend-deployment spring-boot=${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} -n karateflow-stg
                         
-                        # Mettiamo la pipeline in attesa finché i pod non sono effettivamente partiti e in salute
+                        # Monitoraggio del rollout
                         kubectl rollout status deployment/backend-deployment -n karateflow-stg
                     """
                 }
@@ -92,10 +88,10 @@ pipeline {
                 curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "success", "context": "continuous-integration/jenkins", "description": "Deploy in Staging completato!", "target_url": "${env.BUILD_URL}"}' \
+                     -d '{"state": "success", "context": "continuous-integration/jenkins/cd", "description": "Deploy in Staging completato!", "target_url": "${env.BUILD_URL}"}' \
                      https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
             """
-            // Opzionale: pulizia delle immagini docker locali sul PC per risparmiare spazio
+            // Pulizia immagini docker locali per risparmio spazio
             sh "docker rmi ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:${env.COMMIT_SHA} ${env.LOCAL_REGISTRY}/${env.IMAGE_NAME}:latest || true"
         }
         failure {
@@ -103,10 +99,9 @@ pipeline {
                 curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
                      -H "Accept: application/vnd.github.v3+json" \
                      -X POST \
-                     -d '{"state": "failure", "context": "continuous-integration/jenkins", "description": "Build o Deploy fallito.", "target_url": "${env.BUILD_URL}"}' \
+                     -d '{"state": "failure", "context": "continuous-integration/jenkins/cd", "description": "Deploy in Staging fallito.", "target_url": "${env.BUILD_URL}"}' \
                      https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
             """
         }
     }
-    
 }
