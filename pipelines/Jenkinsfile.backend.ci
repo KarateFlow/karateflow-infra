@@ -1,0 +1,80 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(name: 'APP_BRANCH', defaultValue: 'main', description: 'Branch o Commit SHA di karateflow-be da testare')
+    }
+    
+    environment {
+        GITHUB_CREDENTIALS = credentials('github-token-secret')
+        TESTCONTAINERS_RYUK_DISABLED = 'true'
+        TESTCONTAINERS_HOST_OVERRIDE = 'host.docker.internal'
+    }
+    
+    tools {
+        maven 'Maven 3.x'
+    }
+    
+    stages {
+        
+        stage('Checkout e Init') {
+            steps {
+                git url: 'https://github.com/KarateFlow/karateflow-be.git', branch: "${params.APP_BRANCH}"
+                
+                script {
+                    env.COMMIT_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                }
+
+                sh """
+                    curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
+                         -H "Accept: application/vnd.github.v3+json" \
+                         -X POST \
+                         -d '{"state": "pending", "context": "continuous-integration/jenkins/ci", "description": "Analisi CI e Quality Gate in corso...", "target_url": "${env.BUILD_URL}"}' \
+                         https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
+                """
+            }
+        }
+        
+        stage('Compile & Test') {
+            steps {
+                sh 'mvn clean compile verify'
+            }
+        }
+
+        stage('SonarQube Analysis & Quality Gate') {
+            steps {
+                withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
+                    sh """
+                        mvn sonar:sonar \
+                            -Dsonar.host.url=http://sonarqube.local \
+                            -Dsonar.token=\${SONAR_TOKEN} \
+                            -Dsonar.projectKey=karateflow-be \
+                            -Dsonar.qualitygate.wait=true
+                    """
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            sh """
+                curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     -X POST \
+                     -d '{"state": "success", "context": "continuous-integration/jenkins/ci", "description": "CI e Quality Gate superati!", "target_url": "${env.BUILD_URL}"}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
+            """
+        }
+        failure {
+            sh """
+                curl -H "Authorization: token \$GITHUB_CREDENTIALS" \
+                     -H "Accept: application/vnd.github.v3+json" \
+                     -X POST \
+                     -d '{"state": "failure", "context": "continuous-integration/jenkins/ci", "description": "CI o Quality Gate falliti.", "target_url": "${env.BUILD_URL}"}' \
+                     https://api.github.com/repos/KarateFlow/karateflow-be/statuses/\$COMMIT_SHA
+            """
+        }
+    }
+    
+}
