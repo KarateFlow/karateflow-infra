@@ -106,6 +106,7 @@ pipeline {
                             -Dsonar.token=\${SONAR_TOKEN} \
                             -Dsonar.projectKey=karateflow-fe \
                             -Dsonar.sources=src \
+                            -Dsonar.typescript.tsconfigPaths=tsconfig.sonar.json \
                             -Dsonar.qualitygate.wait=true \
                             \$LCOV_PROP
                     """
