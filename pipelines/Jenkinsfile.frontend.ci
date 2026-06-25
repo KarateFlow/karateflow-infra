@@ -46,7 +46,13 @@ pipeline {
         
         stage('Test') {
             steps {
-                sh 'npm run test -- --no-watch'
+                sh """
+                    if grep -q '"@vitest/coverage-v8"' package.json; then
+                        npm run test -- --no-watch --coverage
+                    else
+                        npm run test -- --no-watch
+                    fi
+                """
             }
         }
 
@@ -90,12 +96,18 @@ pipeline {
                         SCANNER_PATH=\$(find "\$SCANNER_DIR" -maxdepth 2 -type d -name "sonar-scanner-*" | head -n 1)
                         echo "Using SonarScanner at: \$SCANNER_PATH"
                         
+                        LCOV_PROP=""
+                        if [ -f "coverage/karateflow-fe/lcov.info" ]; then
+                            LCOV_PROP="-Dsonar.javascript.lcov.reportPaths=coverage/karateflow-fe/lcov.info"
+                        fi
+                        
                         "\$SCANNER_PATH/bin/sonar-scanner" \
                             -Dsonar.host.url=http://sonarqube.local \
                             -Dsonar.token=\${SONAR_TOKEN} \
                             -Dsonar.projectKey=karateflow-fe \
                             -Dsonar.sources=src \
-                            -Dsonar.qualitygate.wait=true
+                            -Dsonar.qualitygate.wait=true \
+                            \$LCOV_PROP
                     """
                 }
             }
