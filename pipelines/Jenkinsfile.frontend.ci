@@ -54,7 +54,43 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                     sh """
-                        npx @sonar/scan \
+                        SCANNER_VERSION="8.0.1.6346"
+                        ARCH=\$(uname -m)
+                        if [ "\$ARCH" = "aarch64" ] || [ "\$ARCH" = "arm64" ]; then
+                            SCANNER_FLAVOR="linux-aarch64"
+                        else
+                            SCANNER_FLAVOR="linux-x64"
+                        fi
+                        
+                        SCANNER_ZIP="sonar-scanner-cli-\${SCANNER_VERSION}-\${SCANNER_FLAVOR}.zip"
+                        SCANNER_DIR="\$HOME/.sonar/native-sonar-scanner/\${SCANNER_VERSION}"
+                        
+                        if [ ! -d "\$SCANNER_DIR" ]; then
+                            echo "Downloading native SonarScanner for \${SCANNER_FLAVOR}..."
+                            mkdir -p "\$SCANNER_DIR"
+                            if ! command -v unzip >/dev/null; then
+                                if command -v apt-get >/dev/null; then
+                                    apt-get update && apt-get install -y unzip
+                                elif command -v apk >/dev/null; then
+                                    apk add --no-cache unzip
+                                fi
+                            fi
+                            if ! command -v curl >/dev/null; then
+                                if command -v apt-get >/dev/null; then
+                                    apt-get update && apt-get install -y curl
+                                elif command -v apk >/dev/null; then
+                                    apk add --no-cache curl
+                                fi
+                            fi
+                            curl -sSLo "/tmp/\${SCANNER_ZIP}" "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/\${SCANNER_ZIP}"
+                            unzip -o "/tmp/\${SCANNER_ZIP}" -d "\$SCANNER_DIR"
+                            rm "/tmp/\${SCANNER_ZIP}"
+                        fi
+                        
+                        SCANNER_PATH=\$(find "\$SCANNER_DIR" -maxdepth 2 -type d -name "sonar-scanner-*" | head -n 1)
+                        echo "Using SonarScanner at: \$SCANNER_PATH"
+                        
+                        "\$SCANNER_PATH/bin/sonar-scanner" \
                             -Dsonar.host.url=http://sonarqube.local \
                             -Dsonar.token=\${SONAR_TOKEN} \
                             -Dsonar.projectKey=karateflow-fe \
