@@ -78,7 +78,7 @@ spec:
               memory: "1536Mi"
               cpu: "300m"
             limits:
-              memory: "2252Mi"
+              memory: "2.5Gi"
               cpu: "1.5"
           volumeMounts:
             - name: sonarqube-data
