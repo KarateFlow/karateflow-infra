@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner
+  namespace: cicd
+  labels:
+    app: github-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-runner
+  template:
+    metadata:
+      labels:
+        app: github-runner
+    spec:
+      serviceAccountName: github-runner-sa
+      containers:
+        - name: github-runner
+          # Usiamo l'immagine myoung34 che gestisce in automatico lo script di entrypoint
+          # per la registrazione e de-registrazione del runner
+          image: myoung34/github-runner:ubuntu-jammy
+          env:
+            - name: REPO_URL
+              # Registriamo il runner a livello di intera organizzazione
+              value: "https://github.com/KarateFlow"
+            - name: RUNNER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RUNNER_LABELS
+              value: "self-hosted,k3s,linux,arm64"
+            - name: RUNNER_WORKDIR
+              value: "/tmp/github-runner-your-repo"
+            - name: RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-runner-secret
+                  key: RUNNER_TOKEN
+          # Mount del docker socket dell'host per permettere i comandi 'docker build'
+          volumeMounts:
+            - name: docker-socket
+              mountPath: /var/run/docker.sock
+      volumes:
+        - name: docker-socket
+          hostPath:
+            path: /var/run/docker.sock
